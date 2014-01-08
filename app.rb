@@ -3,7 +3,6 @@ RACK_ENV ||= ENV["RACK_ENV"] || "development"
 
 require "bundler/setup"
 require "sinatra"
-require "sinatra/reloader" if RACK_ENV == "development"
 require "statsd"
 
 # Default app settings
