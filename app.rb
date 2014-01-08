@@ -10,8 +10,23 @@ set :environment, RACK_ENV.to_sym
 set :logging, true
 set :raise_errors, true
 
+class StatsdMinimal
+  def rand
+    0.0
+  end
+end
+
 def build_client
-  Statsd.new ENV['STATSD_HOST'], ENV['STATSD_PORT']
+  client = Statsd.new ENV['STATSD_HOST'], ENV['STATSD_PORT']
+
+  # Sample rate behaviour is already implemented in the
+  # client.  We want to pass it to the statsd server,
+  # but we don't want Statsd to act on it.
+  def client.rand
+    0.0
+  end
+
+  client
 end
 
 def statsd
@@ -22,33 +37,36 @@ def statsd
   end
 end
 
-# we never allowed sample rate to be 0
-def get_sample_rate(params)
-  sample_rate = params["sample_rate"].to_f
-  return nil if sample_rate == 0
-  sample_rate
+def parse_number(str)
+  str.include?('.') ? str.to_f : str.to_i
 end
 
-get '/increment' do
-  sample_rate = get_sample_rate(params)
-  args = [params["name"]]
-  args << sample_rate if sample_rate
-  statsd.increment *args
-  [200, {'Content-Type' => 'image/gif'}, ""]
-end
+STATSD_METHODS = {
+  'c'  => :count,
+  'g'  => :gauge,
+  'h'  => :histogram,
+  'ms' => :timing,
+  's'  => :set
+}
 
-get '/decrement' do
-  sample_rate = get_sample_rate(params)
-  args = [params["name"]]
-  args << sample_rate if sample_rate
-  statsd.decrement *args
-  [200, {'Content-Type' => 'image/gif'}, ""]
-end
+post '/' do
+  type   = params['t'].to_s
+  method = STATSD_METHODS[type]
+  return 415 unless method
 
-get '/timing' do
-  sample_rate = get_sample_rate(params)
-  args = [params["name"], params["value"].to_f]
-  args << sample_rate if sample_rate
-  statsd.timing *args
-  [200, {'Content-Type' => 'image/gif'}, ""]
+  stat  = "minecraft.#{params['s']}"
+  value = parse_number(params['v'])
+  rate  = params['r'].to_f
+
+  tags = params.select { |k, v| k.start_with?('_') }.map do |k, v|
+    k = k.gsub(/:+/, '_')
+    "#{k}:#{v}"
+  end
+
+  opts = {}
+  opts[:sample_rate] = rate if rate > 0.0
+  opts[:tags] = tags unless tags.empty?
+
+  statsd.send(method, stat, value, opts)
+  200
 end
